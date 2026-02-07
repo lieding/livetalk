@@ -1,23 +1,22 @@
-from tqdm import tqdm
 from typing import List, Optional, Dict, Any
 import os
 import torch
-import torch.nn as nn
-import sys
-sys.path.append("OmniAvatar")
-from OmniAvatar.utils.args_config import parse_args
-args = parse_args()
-import math
+
 import numpy as np
 import librosa
 import torchvision.transforms as TT
-from scripts.inference import match_size,resize_pad
-from OmniAvatar.schedulers.flow_match import FlowMatchScheduler
+from utils.dataset import resize_pad
+
+from utils.Omniavatarpatch.flow_match import FlowMatchScheduler
 from transformers import Wav2Vec2FeatureExtractor
 import subprocess
 import time
 from utils.wan_wrapper import WanDiffusionWrapper, WanTextEncoder, WanVAEWrapper
 
+from utils.Omniavatarpatch.args_config import parse_args
+args = parse_args()
+
+# umt5xxl https://huggingface.co/Osrivers/models_t5_umt5-xxl-enc-bf16.pth/resolve/main/models_t5_umt5-xxl-enc-bf16.pth
 
 class CausalInferencePipeline(torch.nn.Module):
     def __init__(
@@ -44,7 +43,7 @@ class CausalInferencePipeline(torch.nn.Module):
         self.scheduler = FlowMatchScheduler(shift=5, sigma_min=0.0, extra_one_step=True,num_inference_steps=4)
 
         # Initialize audio encoder
-        from OmniAvatar.models.wav2vec import Wav2VecModel
+        from utils.Omniavatarpatch.wav2vec import Wav2VecModel
         self.wav_feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(
                 args.wav2vec_path
             )
@@ -59,13 +58,13 @@ class CausalInferencePipeline(torch.nn.Module):
 
         # Initialize text encoder with custom path
         import os
-        tokenizer_path = os.path.join(os.path.dirname(args.text_encoder_path), "google/umt5-xxl/")
-        self.text_encoder = WanTextEncoder(
-            text_encoder_path=args.text_encoder_path,
-            tokenizer_path=tokenizer_path,
-        )
-        self.text_encoder.to(device=self.device, dtype=self.dtype)
-        self.text_encoder.requires_grad_(False)
+        #tokenizer_path = os.path.join(os.path.dirname(args.text_encoder_path), "google/umt5-xxl/")
+        #self.text_encoder = WanTextEncoder(
+        #    text_encoder_path=args.text_encoder_path,
+        #    tokenizer_path=tokenizer_path,
+        #)
+        #self.text_encoder.to(device=self.device, dtype=self.dtype)
+        #self.text_encoder.requires_grad_(False)
 
         # Initialize VAE with custom path
         self.vae = WanVAEWrapper(vae_path=args.vae_path)
@@ -141,8 +140,8 @@ class CausalInferencePipeline(torch.nn.Module):
             image = Image.open(image_path).convert("RGB")
             image = self.transform(image).unsqueeze(0).to(self.device)
             _, _, h, w = image.shape
-            select_size = match_size(getattr(self.args, f'image_sizes_{self.args.max_hw}'), h, w)
-            image = resize_pad(image, (h, w), select_size)
+            #select_size = match_size(getattr(self.args, f'image_sizes_{self.args.max_hw}'), h, w)
+            image = resize_pad(image, (h, w), (h, w))
             image = image * 2.0 - 1.0
             image = image[:, :, None]
             # Use WanVAEWrapper's encode_to_latent method
@@ -234,7 +233,7 @@ class CausalInferencePipeline(torch.nn.Module):
             num_output_frames = num_frames + num_input_frames
             
             # Text conditioning
-            conditional_dict = self._encode_text_prompts(text_prompts, positive=True)
+            conditional_dict = torch.load("default_embed.pth") # self._encode_text_prompts(text_prompts, positive=True)
             conditional_dict['image']=img_lat
             conditional_dict['audio']=audio_embed
             
@@ -548,37 +547,37 @@ def main():
     video_np = (video.squeeze(0).permute(0, 2, 3, 1).cpu().float().numpy() * 255).astype(np.uint8)
     print(video_np.shape)
     imageio.mimsave(
-    "tmp.mp4",
-    video_np,                       # (T,H,W,3) uint8 0-255
-    fps=args.fps,
-    codec="libx264",
-    macro_block_size=None,          # 避免对齐引起的缩放
-    ffmpeg_params=[
-        "-crf", "18",               # 18更清晰；可改 20/22/24 找平衡
-        "-preset", "veryfast",      # 编码速度/效率权衡：ultrafast..placebo
-        "-pix_fmt", "yuv420p"       # 兼容性最好
-    ]
-)
+        "tmp.mp4",
+        video_np,                       # (T,H,W,3) uint8 0-255
+        fps=args.fps,
+        codec="libx264",
+        macro_block_size=None,          # 避免对齐引起的缩放
+        ffmpeg_params=[
+            "-crf", "18",               # 18更清晰；可改 20/22/24 找平衡
+            "-preset", "veryfast",      # 编码速度/效率权衡：ultrafast..placebo
+            "-pix_fmt", "yuv420p"       # 兼容性最好
+        ]
+    )
     
     
-    cmd = [
-    "ffmpeg", "-y",
-    "-loglevel", "error",       # Only show errors, suppress info messages
-    "-i", "tmp.mp4",            # 无声视频
-    "-i", audio_path,           # 原始音频（16 kHz mono）
-    "-map", "0:v:0", "-map", "1:a:0",
-    "-c:v", "copy",             # 不重编码视频
-    "-c:a", "aac",              # AAC-LC
-    "-ar", "48000",             # 上采样到 48 kHz（避免每帧比特上限告警）
-    "-ac", "1",                 # 单声道（需要立体声可改 2）
-    "-b:a", "96k",              # 常用语音码率；128k 也可
-    "-movflags", "+faststart",  # 网页首开更快（可选）
-    "-shortest",
-    output_path
-]
-    subprocess.run(cmd, check=True)
-    os.remove("tmp.mp4")  # Clean up temporary file
-    print(f"Video saved to: {output_path}")
+    # cmd = [
+    #     "ffmpeg", "-y",
+    #     "-loglevel", "error",       # Only show errors, suppress info messages
+    #     "-i", "tmp.mp4",            # 无声视频
+    #     "-i", audio_path,           # 原始音频（16 kHz mono）
+    #     "-map", "0:v:0", "-map", "1:a:0",
+    #     "-c:v", "copy",             # 不重编码视频
+    #     "-c:a", "aac",              # AAC-LC
+    #     "-ar", "48000",             # 上采样到 48 kHz（避免每帧比特上限告警）
+    #     "-ac", "1",                 # 单声道（需要立体声可改 2）
+    #     "-b:a", "96k",              # 常用语音码率；128k 也可
+    #     "-movflags", "+faststart",  # 网页首开更快（可选）
+    #     "-shortest",
+    #     output_path
+    # ]
+    # subprocess.run(cmd, check=True)
+    # os.remove("tmp.mp4")  # Clean up temporary file
+    # print(f"Video saved to: {output_path}")
     
     print("Causal inference completed successfully!")
         
