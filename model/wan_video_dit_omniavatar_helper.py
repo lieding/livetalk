@@ -19,7 +19,8 @@ except ModuleNotFoundError:
 try:
     from sageattention import sageattn
     SAGE_ATTN_AVAILABLE = True
-except ModuleNotFoundError:
+except ModuleNotFoundError or NotImplementedError:
+    print("sage attention is disabled")
     SAGE_ATTN_AVAILABLE = False
     
 def flash_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, num_heads: int, compatibility_mode=False):
